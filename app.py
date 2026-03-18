@@ -1,10 +1,81 @@
 import streamlit as st
 import requests
+import re
+
+# --- FUNZIONI DI CALCOLO ALCOL ---
+
+gradazioni_alcoliche = {
+    "vodka": 40.0, "gin": 40.0, "rum": 40.0, "tequila": 40.0, "whiskey": 40.0, 
+    "bourbon": 40.0, "rye whiskey": 40.0, "scotch": 40.0, "cognac": 40.0, "brandy": 40.0,
+    "triple sec": 30.0, "cointreau": 40.0, "grand marnier": 40.0, "amaretto": 28.0,
+    "kahlua": 20.0, "baileys": 17.0, "campari": 25.0, "aperol": 11.0, 
+    "vermouth": 15.0, "sweet vermouth": 15.0, "dry vermouth": 15.0,
+    "champagne": 12.0, "prosecco": 11.0, "wine": 12.0, "red wine": 13.0, "white wine": 12.0,
+    "beer": 5.0, "ale": 5.0, "stout": 6.0, "cider": 5.0, "mezcal": 40.0
+}
+
+# --- NUOVO: LISTA BEVANDE STANDARD PER LA TENDINA ---
+menu_alcolici = {
+    "Birra Piccola (330ml, 5%)": {"ml": 330, "abv": 5.0},
+    "Birra Media (500ml, 5%)": {"ml": 500, "abv": 5.0},
+    "Vino Rosso - Calice (150ml, 13%)": {"ml": 150, "abv": 13.0},
+    "Vino Bianco - Calice (150ml, 12%)": {"ml": 150, "abv": 12.0},
+    "Prosecco/Spumante (150ml, 11%)": {"ml": 150, "abv": 11.0},
+    "Shot (Vodka/Tequila/Rum) (40ml, 40%)": {"ml": 40, "abv": 40.0},
+    "Amaro/Digestivo (40ml, 30%)": {"ml": 40, "abv": 30.0},
+    "Grappa (40ml, 40%)": {"ml": 40, "abv": 40.0},
+    "Spritz (Aperol/Campari) (150ml, ~11%)": {"ml": 150, "abv": 11.0}
+}
+
+def calcola_ml_da_misura(misura_str):
+    if not misura_str: return 0.0
+    misura = misura_str.lower().strip()
+    valore = 1.0
+    if "1/2" in misura: valore = 0.5
+    elif "1/4" in misura: valore = 0.25
+    elif "3/4" in misura: valore = 0.75
+    elif "1/3" in misura: valore = 0.33
+    else:
+        match = re.search(r'^[\d\.]+', misura)
+        if match:
+            valore = float(match.group())
+
+    if "oz" in misura: return valore * 30.0
+    if "cl" in misura: return valore * 10.0
+    if "ml" in misura: return valore
+    if "shot" in misura: return valore * 44.0
+    if "part" in misura: return valore * 30.0
+    if "dash" in misura or "drop" in misura or "splash" in misura: return 1.0
+    return valore * 30.0
+
+def calcola_grammi_drink(drink_data):
+    totale_grammi = 0.0
+    ingredienti_calcolati = []
+    
+    for i in range(1, 16):
+        ingrediente = drink_data.get(f'strIngredient{i}')
+        misura = drink_data.get(f'strMeasure{i}')
+        
+        if ingrediente:
+            ingrediente_basso = ingrediente.lower()
+            ml_totali = calcola_ml_da_misura(misura)
+            abv = 0.0
+            for chiave in gradazioni_alcoliche:
+                if chiave in ingrediente_basso:
+                    abv = gradazioni_alcoliche[chiave]
+                    break
+            
+            if abv > 0:
+                grammi = ml_totali * (abv / 100) * 0.8
+                totale_grammi += grammi
+                ingredienti_calcolati.append(f"{ingrediente} ({ml_totali:.0f}ml al {abv}%) -> {grammi:.1f}g di alcol")
+                
+    return totale_grammi, ingredienti_calcolati
+
 
 # --- IMPOSTAZIONI E MEMORIA DELL'APP ---
 st.set_page_config(page_title="Calcolatore Tasso Alcolemico", page_icon="🍷")
 
-# Inizializziamo la "memoria" dell'app per ricordare cosa abbiamo bevuto e mangiato
 if 'lista_drink' not in st.session_state:
     st.session_state.lista_drink = []
 if 'totale_alcol_g' not in st.session_state:
@@ -22,66 +93,91 @@ with col2:
 
 st.divider()
 
-# --- SEZIONE 2: RICERCA E AGGIUNTA DRINK (TheCocktailDB) ---
+# --- SEZIONE 2: INSERIMENTO BEVANDE CON TABS ---
 st.header("2. Cosa hai bevuto?")
-nome_drink = st.text_input("Cerca un cocktail (es. Margarita, Mojito):")
 
-if st.button("Cerca e Mostra Dettagli"):
-    if nome_drink:
-        url_api = f"https://www.thecocktaildb.com/api/json/v1/1/search.php?s={nome_drink}"
-        risposta = requests.get(url_api)
-        dati = risposta.json()
-        
-        if dati['drinks']:
-            drink_trovato = dati['drinks'][0]
-            nome = drink_trovato['strDrink']
-            st.success(f"Trovato: {nome}")
-            
-            # Un cocktail medio contiene circa 14-18 grammi di alcol puro. 
-            # In futuro miglioreremo questo calcolo analizzando ogni singolo ingrediente!
-            alcol_stimato = st.slider("Conferma i grammi di alcol per questo drink (Media: 14g)", 0, 50, 14)
-            
-            # Bottone per salvare il drink nella memoria
-            if st.button(f"Aggiungi {nome} alla tua lista"):
-                st.session_state.lista_drink.append(nome)
-                st.session_state.totale_alcol_g += alcol_stimato
-                st.rerun() # Ricarica la pagina per aggiornare i dati mostrati
-        else:
-            st.error("Drink non trovato. Riprova con il nome in inglese!")
+# Creiamo due schede navigabili
+tab1, tab2 = st.tabs(["🍺 Selezione Rapida (Lista)", "🍹 Cerca Cocktail (API)"])
 
-# Mostra cosa c'è in memoria
-if st.session_state.lista_drink:
-    st.write("**I tuoi drink consumati finora:**")
-    for drink in st.session_state.lista_drink:
-        st.write(f"- 🍹 {drink}")
-    st.write(f"**Totale alcol assunto:** {st.session_state.totale_alcol_g} g")
+# SCHEDA 1: LA TENDINA RAPIDA
+with tab1:
+    st.write("Scegli una bevanda comune dalla lista:")
+    # La tendina (selectbox) prende i nomi dal nostro dizionario 'menu_alcolici'
+    scelta_rapida = st.selectbox("Seleziona la bevanda:", list(menu_alcolici.keys()))
     
-    # Bottone per svuotare la memoria
-    if st.button("Svuota lista drink"):
+    if st.button("Aggiungi alla lista", key="btn_rapido"):
+        # Calcoliamo subito i grammi usando i dati del dizionario: ml * (abv/100) * 0.8 (densità alcol)
+        dati_bevanda = menu_alcolici[scelta_rapida]
+        grammi_calcolati = dati_bevanda["ml"] * (dati_bevanda["abv"] / 100) * 0.8
+        
+        st.session_state.lista_drink.append(scelta_rapida)
+        st.session_state.totale_alcol_g += grammi_calcolati
+        st.rerun() # Aggiorna la pagina per mostrare i nuovi dati
+
+# SCHEDA 2: LA RICERCA API
+with tab2:
+    st.write("Cerca un cocktail specifico nel database internazionale.")
+    nome_drink = st.text_input("Nome del cocktail (es. Margarita, Negroni):")
+
+    if st.button("Cerca e Calcola Alcol", key="btn_ricerca"):
+        if nome_drink:
+            url_api = f"https://www.thecocktaildb.com/api/json/v1/1/search.php?s={nome_drink}"
+            risposta = requests.get(url_api)
+            dati = risposta.json()
+            
+            if dati['drinks']:
+                drink_trovato = dati['drinks'][0]
+                nome = drink_trovato['strDrink']
+                alcol_calcolato, dettagli = calcola_grammi_drink(drink_trovato)
+                
+                st.success(f"Trovato: {nome}")
+                st.write(f"**Alcol calcolato automaticamente:** {alcol_calcolato:.1f} g")
+                
+                with st.expander("Vedi i dettagli del calcolo"):
+                    if dettagli:
+                        for det in dettagli:
+                            st.write(f"- {det}")
+                    else:
+                        st.write("Nessun ingrediente alcolico riconosciuto.")
+                
+                if st.button(f"Aggiungi {nome} alla tua lista", key="btn_aggiungi_ricerca"):
+                    st.session_state.lista_drink.append(nome)
+                    st.session_state.totale_alcol_g += alcol_calcolato
+                    st.rerun()
+            else:
+                st.error("Drink non trovato. Riprova con il nome in inglese!")
+
+# MOSTRA IL RESOCONTO DELLA MEMORIA (Visibile indipendentemente dalla scheda scelta)
+st.write("---")
+if st.session_state.lista_drink:
+    st.write("#### 🛒 Il tuo scontrino virtuale:")
+    for drink in st.session_state.lista_drink:
+        st.write(f"- {drink}")
+    st.write(f"**Totale alcol assunto:** {st.session_state.totale_alcol_g:.1f} g")
+    
+    if st.button("🗑️ Svuota lista"):
         st.session_state.lista_drink = []
         st.session_state.totale_alcol_g = 0.0
         st.rerun()
 
 st.divider()
 
-# --- SEZIONE 3: CIBO, ANALCOLICI E MINZIONE ---
-st.header("3. Cibo, Acqua e Idratazione")
-st.write("*(Presto collegheremo il database USDA/FatSecret qui)*")
-ha_mangiato = st.checkbox("Ho fatto un pasto completo (Rallenta l'assorbimento dell'alcol)")
+# --- SEZIONE 3: CIBO E IDRATAZIONE ---
+st.header("3. Cibo e Idratazione")
+ha_mangiato = st.checkbox("Ho fatto un pasto completo")
 bicchieri_acqua = st.number_input("Bicchieri d'acqua o analcolici bevuti", min_value=0, value=0)
-eventi_minzione = st.number_input("Quante volte sei andato/a in bagno? (Aiuta a capire l'idratazione)", min_value=0, value=0)
+eventi_minzione = st.number_input("Quante volte sei andato/a in bagno?", min_value=0, value=0)
 
 st.divider()
 
-# --- SEZIONE 4: IL CALCOLO ---
+# --- SEZIONE 4: IL CALCOLO FINALE ---
 st.header("4. Risultato")
 ore_trascorse = st.number_input("Ore trascorse dal primo drink", min_value=0.0, value=1.0, step=0.5)
 
 if st.button("Calcola Tasso Alcolemico e Idratazione", type="primary"):
-    # 1. Calcolo Tasso Alcolemico (Widmark)
     r = 0.68 if sesso == "Maschio" else 0.55
     if ha_mangiato:
-        r += 0.1 # Il cibo aumenta il fattore r, abbassando il picco di alcol nel sangue
+        r += 0.1
         
     if peso > 0 and st.session_state.totale_alcol_g > 0:
         bac_iniziale = st.session_state.totale_alcol_g / (peso * r)
@@ -90,18 +186,3 @@ if st.button("Calcola Tasso Alcolemico e Idratazione", type="primary"):
         bac_finale = 0.0
         
     st.subheader(f"Tasso alcolemico stimato: {bac_finale:.2f} g/L")
-    
-    if bac_finale > 0.5:
-        st.error("🚨 Hai superato il limite legale per guidare in Italia (0.5 g/L). Non metterti alla guida.")
-    elif bac_finale > 0:
-        st.warning("⚠️ Sei sotto il limite, ma i tuoi riflessi potrebbero essere alterati.")
-    else:
-        st.success("✅ Tasso alcolemico a zero.")
-
-    # 2. Feedback sull'idratazione
-    st.write("---")
-    st.write("### Status Idratazione 💧")
-    if bicchieri_acqua < len(st.session_state.lista_drink):
-        st.warning("Attenzione: Stai bevendo meno acqua rispetto all'alcol. L'alcol disidrata! Bevi un bicchiere d'acqua per evitare i postumi.")
-    else:
-        st.success("Ottimo lavoro! Stai bevendo abbastanza acqua per mantenerti idratato.")
