@@ -2,19 +2,14 @@ import streamlit as st
 import requests
 import re
 
-# --- NUOVA FUNZIONE: RICERCA CIBO CON USDA FOODDATA CENTRAL ---
+# --- FUNZIONI DI RICERCA CIBO CON USDA FOODDATA CENTRAL ---
 def cerca_cibo_usda(query):
-    """Cerca un alimento nel database ufficiale del governo americano (USDA)"""
     url = "https://api.nal.usda.gov/fdc/v1/foods/search"
-    
-    # Usiamo la DEMO_KEY per iniziare subito. Se l'app diventerà famosa, 
-    # basterà registrasi sul sito USDA per avere una chiave senza limiti!
     parametri = {
         "api_key": "DEMO_KEY",
         "query": query,
-        "pageSize": 5 # Chiediamo solo i primi 5 risultati
+        "pageSize": 5
     }
-    
     risposta = requests.get(url, params=parametri)
     if risposta.status_code == 200:
         dati = risposta.json()
@@ -123,9 +118,11 @@ with col2:
 
 st.divider()
 
-# --- SEZIONE 2: INSERIMENTO BEVANDE ---
+# --- SEZIONE 2: INSERIMENTO BEVANDE (AGGIORNATA) ---
 st.header("2. Cosa hai bevuto?")
-tab1, tab2 = st.tabs(["🍺 Selezione Rapida", "🍹 Cerca Cocktail (API)"])
+
+# NUOVO: Aggiunta la terza scheda (Tab) per l'inserimento manuale!
+tab1, tab2, tab3 = st.tabs(["🍺 Rapida", "🍹 Cerca API", "✍️ Manuale"])
 
 with tab1:
     scelta_rapida = st.selectbox("Seleziona la bevanda:", list(menu_alcolici.keys()))
@@ -137,7 +134,7 @@ with tab1:
         st.rerun()
 
 with tab2:
-    nome_drink = st.text_input("Nome del cocktail (es. Margarita):")
+    nome_drink = st.text_input("Nome del cocktail in inglese (es. Margarita):")
     if st.button("Cerca Cocktail", key="btn_ricerca_drink"):
         if nome_drink:
             url_api = f"https://www.thecocktaildb.com/api/json/v1/1/search.php?s={nome_drink}"
@@ -152,7 +149,7 @@ with tab2:
                     "dettagli": dettagli
                 }
             else:
-                st.error("Drink non trovato.")
+                st.error("Drink non trovato. Prova con la scheda 'Manuale'!")
                 st.session_state.risultato_ricerca = None
 
     if st.session_state.risultato_ricerca:
@@ -165,7 +162,29 @@ with tab2:
             st.session_state.risultato_ricerca = None
             st.rerun()
 
-# --- SEZIONE 3: CIBO E IDRATAZIONE (AGGIORNATA USDA) ---
+# --- LA NUOVA SCHEDA MANUALE ---
+with tab3:
+    st.write("Non trovi il tuo drink o hai bevuto qualcosa di particolare? Inseriscilo qui:")
+    nome_manuale = st.text_input("Nome del drink (es. Angelo Azzurro, Amaro della casa):")
+    
+    col_m1, col_m2 = st.columns(2)
+    with col_m1:
+        ml_manuale = st.number_input("Quantità (in ml)", min_value=10, max_value=1000, value=150, step=10)
+    with col_m2:
+        abv_manuale = st.number_input("Gradazione Alcolica (VOL %)", min_value=1.0, max_value=95.0, value=15.0, step=0.5)
+        
+    if st.button("Aggiungi Drink Manuale"):
+        if nome_manuale:
+            # Calcolo standard: volume * (percentuale/100) * densità alcol
+            grammi_calc = ml_manuale * (abv_manuale / 100) * 0.8
+            st.session_state.lista_drink.append(f"{nome_manuale} ({ml_manuale}ml al {abv_manuale}%)")
+            st.session_state.totale_alcol_g += grammi_calc
+            st.rerun()
+        else:
+            st.warning("Per favore, inserisci un nome per il tuo drink.")
+
+
+# --- SEZIONE 3: CIBO E IDRATAZIONE (USDA) ---
 st.divider()
 st.header("3. Cibo e Idratazione 🍔💧")
 
@@ -178,7 +197,7 @@ with tab_cibo1:
         st.rerun()
 
 with tab_cibo2:
-    st.write("Cerca nel database del Dipartimento dell'Agricoltura USA (usa l'inglese, es. 'Cheese', 'Apple'):")
+    st.write("Cerca nel database del Dipartimento dell'Agricoltura USA (usa l'inglese, es. 'Cheese'):")
     query_cibo = st.text_input("Nome alimento:")
 
     if st.button("Cerca Alimento", key="btn_ricerca_cibo"):
@@ -192,9 +211,7 @@ with tab_cibo2:
                     st.session_state.risultati_ricerca_cibo = None
 
     if st.session_state.risultati_ricerca_cibo:
-        st.write("**Risultati trovati dal database USDA:**")
         for cibo in st.session_state.risultati_ricerca_cibo:
-            # L'API dell'USDA chiama il nome 'description' e la marca 'brandOwner'
             nome_cibo = cibo.get('description', 'Sconosciuto').title()
             marca = cibo.get('brandOwner', 'Generico')
             
@@ -202,13 +219,11 @@ with tab_cibo2:
             with col_testo:
                 st.write(f"**{nome_cibo}** (*{marca}*)")
             with col_btn:
-                # Usiamo l'ID ufficiale dell'USDA 'fdcId'
                 if st.button("➕ Aggiungi", key=f"add_cibo_{cibo.get('fdcId')}"):
                     st.session_state.lista_cibo.append(f"{nome_cibo} ({marca})")
                     st.session_state.risultati_ricerca_cibo = None
                     st.rerun()
 
-# Riepilogo cibo mangiato
 if st.session_state.lista_cibo:
     st.success("🍕 Cibo consumato registrato:")
     for pasto in st.session_state.lista_cibo:
