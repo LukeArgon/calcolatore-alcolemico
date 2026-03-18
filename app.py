@@ -178,3 +178,82 @@ with tab_cibo1:
         st.rerun()
 
 with tab_cibo2:
+    st.write("Cerca nel database del Dipartimento dell'Agricoltura USA (usa l'inglese, es. 'Cheese', 'Apple'):")
+    query_cibo = st.text_input("Nome alimento:")
+
+    if st.button("Cerca Alimento", key="btn_ricerca_cibo"):
+        if query_cibo:
+            with st.spinner("Connessione ai server USDA in corso..."):
+                risultati = cerca_cibo_usda(query_cibo)
+                if risultati:
+                    st.session_state.risultati_ricerca_cibo = risultati
+                else:
+                    st.error("Nessun alimento trovato. Assicurati di cercare in inglese!")
+                    st.session_state.risultati_ricerca_cibo = None
+
+    if st.session_state.risultati_ricerca_cibo:
+        st.write("**Risultati trovati dal database USDA:**")
+        for cibo in st.session_state.risultati_ricerca_cibo:
+            # L'API dell'USDA chiama il nome 'description' e la marca 'brandOwner'
+            nome_cibo = cibo.get('description', 'Sconosciuto').title()
+            marca = cibo.get('brandOwner', 'Generico')
+            
+            col_testo, col_btn = st.columns([3, 1])
+            with col_testo:
+                st.write(f"**{nome_cibo}** (*{marca}*)")
+            with col_btn:
+                # Usiamo l'ID ufficiale dell'USDA 'fdcId'
+                if st.button("➕ Aggiungi", key=f"add_cibo_{cibo.get('fdcId')}"):
+                    st.session_state.lista_cibo.append(f"{nome_cibo} ({marca})")
+                    st.session_state.risultati_ricerca_cibo = None
+                    st.rerun()
+
+# Riepilogo cibo mangiato
+if st.session_state.lista_cibo:
+    st.success("🍕 Cibo consumato registrato:")
+    for pasto in st.session_state.lista_cibo:
+        st.write(f"- {pasto}")
+    if st.button("🗑️ Svuota lista cibo"):
+        st.session_state.lista_cibo = []
+        st.rerun()
+
+st.write("---")
+col_idra1, col_idra2 = st.columns(2)
+with col_idra1:
+    bicchieri_acqua = st.number_input("Bicchieri d'acqua/analcolici bevuti", min_value=0, value=0)
+with col_idra2:
+    eventi_minzione = st.number_input("Quante volte sei andato/a in bagno?", min_value=0, value=0)
+
+# --- SEZIONE 4 E RIEPILOGO FINALE ---
+st.divider()
+st.header("📊 Riepilogo e Calcolo Finale")
+
+if st.session_state.lista_drink:
+    col_met1, col_met2 = st.columns(2)
+    with col_met1:
+        st.metric(label="🍹 Numero di Drink", value=len(st.session_state.lista_drink))
+    with col_met2:
+        st.metric(label="⚖️ Totale Alcol", value=f"{st.session_state.totale_alcol_g:.1f} g")
+    
+    if st.button("🗑️ Svuota memoria drink", key="svuota_drink_basso"):
+        st.session_state.lista_drink = []
+        st.session_state.totale_alcol_g = 0.0
+        st.rerun()
+
+ore_trascorse = st.number_input("Ore trascorse dal primo drink", min_value=0.0, value=1.0, step=0.5)
+
+if st.button("Calcola Tasso Alcolemico", type="primary"):
+    r = 0.68 if sesso == "Maschio" else 0.55
+    
+    ha_mangiato = len(st.session_state.lista_cibo) > 0
+    if ha_mangiato:
+        r += 0.1
+        st.info("💡 Noto che hai mangiato! Ho adeguato il calcolo: il cibo rallenta l'assorbimento dell'alcol.")
+        
+    if peso > 0 and st.session_state.totale_alcol_g > 0:
+        bac_iniziale = st.session_state.totale_alcol_g / (peso * r)
+        bac_finale = max(0.0, bac_iniziale - (0.15 * ore_trascorse))
+    else:
+        bac_finale = 0.0
+        
+    st.subheader(f"Tasso alcolemico stimato: {bac_finale:.2f} g/L")
