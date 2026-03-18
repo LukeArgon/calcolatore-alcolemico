@@ -3,7 +3,6 @@ import requests
 import re
 
 # --- FUNZIONI DI CALCOLO ALCOL ---
-
 gradazioni_alcoliche = {
     "vodka": 40.0, "gin": 40.0, "rum": 40.0, "tequila": 40.0, "whiskey": 40.0, 
     "bourbon": 40.0, "rye whiskey": 40.0, "scotch": 40.0, "cognac": 40.0, "brandy": 40.0,
@@ -14,7 +13,6 @@ gradazioni_alcoliche = {
     "beer": 5.0, "ale": 5.0, "stout": 6.0, "cider": 5.0, "mezcal": 40.0
 }
 
-# --- NUOVO: LISTA BEVANDE STANDARD PER LA TENDINA ---
 menu_alcolici = {
     "Birra Piccola (330ml, 5%)": {"ml": 330, "abv": 5.0},
     "Birra Media (500ml, 5%)": {"ml": 500, "abv": 5.0},
@@ -96,29 +94,19 @@ st.divider()
 # --- SEZIONE 2: INSERIMENTO BEVANDE CON TABS ---
 st.header("2. Cosa hai bevuto?")
 
-# Creiamo due schede navigabili
-tab1, tab2 = st.tabs(["🍺 Selezione Rapida (Lista)", "🍹 Cerca Cocktail (API)"])
+tab1, tab2 = st.tabs(["🍺 Selezione Rapida", "🍹 Cerca Cocktail (API)"])
 
-# SCHEDA 1: LA TENDINA RAPIDA
 with tab1:
-    st.write("Scegli una bevanda comune dalla lista:")
-    # La tendina (selectbox) prende i nomi dal nostro dizionario 'menu_alcolici'
     scelta_rapida = st.selectbox("Seleziona la bevanda:", list(menu_alcolici.keys()))
-    
     if st.button("Aggiungi alla lista", key="btn_rapido"):
-        # Calcoliamo subito i grammi usando i dati del dizionario: ml * (abv/100) * 0.8 (densità alcol)
         dati_bevanda = menu_alcolici[scelta_rapida]
         grammi_calcolati = dati_bevanda["ml"] * (dati_bevanda["abv"] / 100) * 0.8
-        
         st.session_state.lista_drink.append(scelta_rapida)
         st.session_state.totale_alcol_g += grammi_calcolati
-        st.rerun() # Aggiorna la pagina per mostrare i nuovi dati
+        st.rerun()
 
-# SCHEDA 2: LA RICERCA API
 with tab2:
-    st.write("Cerca un cocktail specifico nel database internazionale.")
-    nome_drink = st.text_input("Nome del cocktail (es. Margarita, Negroni):")
-
+    nome_drink = st.text_input("Nome del cocktail (es. Margarita):")
     if st.button("Cerca e Calcola Alcol", key="btn_ricerca"):
         if nome_drink:
             url_api = f"https://www.thecocktaildb.com/api/json/v1/1/search.php?s={nome_drink}"
@@ -131,34 +119,44 @@ with tab2:
                 alcol_calcolato, dettagli = calcola_grammi_drink(drink_trovato)
                 
                 st.success(f"Trovato: {nome}")
-                st.write(f"**Alcol calcolato automaticamente:** {alcol_calcolato:.1f} g")
+                st.write(f"**Alcol calcolato:** {alcol_calcolato:.1f} g")
                 
-                with st.expander("Vedi i dettagli del calcolo"):
-                    if dettagli:
-                        for det in dettagli:
-                            st.write(f"- {det}")
-                    else:
-                        st.write("Nessun ingrediente alcolico riconosciuto.")
-                
-                if st.button(f"Aggiungi {nome} alla tua lista", key="btn_aggiungi_ricerca"):
+                if st.button(f"Aggiungi {nome} alla lista", key="btn_aggiungi_ricerca"):
                     st.session_state.lista_drink.append(nome)
                     st.session_state.totale_alcol_g += alcol_calcolato
                     st.rerun()
             else:
-                st.error("Drink non trovato. Riprova con il nome in inglese!")
+                st.error("Drink non trovato.")
 
-# MOSTRA IL RESOCONTO DELLA MEMORIA (Visibile indipendentemente dalla scheda scelta)
+# --- NUOVA SEZIONE: RIEPILOGO METRICHE ---
 st.write("---")
+st.header("📊 Riepilogo Consumi")
+
+# Controlliamo se ci sono drink nella memoria
 if st.session_state.lista_drink:
-    st.write("#### 🛒 Il tuo scontrino virtuale:")
-    for drink in st.session_state.lista_drink:
-        st.write(f"- {drink}")
-    st.write(f"**Totale alcol assunto:** {st.session_state.totale_alcol_g:.1f} g")
+    # Creiamo due colonne per i nostri contatori grandi
+    col_met1, col_met2 = st.columns(2)
     
-    if st.button("🗑️ Svuota lista"):
+    # len() conta quanti elementi ci sono nella lista
+    numero_drink_totali = len(st.session_state.lista_drink)
+    
+    # st.metric crea i numeri in grande stile dashboard
+    with col_met1:
+        st.metric(label="🍹 Numero di Drink Assunti", value=numero_drink_totali)
+    with col_met2:
+        st.metric(label="⚖️ Totale Alcol Assunto", value=f"{st.session_state.totale_alcol_g:.1f} g")
+    
+    # Menu espandibile per vedere lo scontrino
+    with st.expander("Vedi i nomi dei drink bevuti"):
+        for drink in st.session_state.lista_drink:
+            st.write(f"- {drink}")
+            
+    if st.button("🗑️ Svuota memoria drink"):
         st.session_state.lista_drink = []
         st.session_state.totale_alcol_g = 0.0
         st.rerun()
+else:
+    st.info("Non hai ancora aggiunto nessun drink. Usa la selezione qui sopra per iniziare!")
 
 st.divider()
 
