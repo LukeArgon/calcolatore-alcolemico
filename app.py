@@ -1,274 +1,132 @@
 import streamlit as st
-import requests
-import re
+import pandas as pd
+import glob
+import os
 
-# --- FUNZIONI DI RICERCA CIBO CON USDA FOODDATA CENTRAL ---
-def cerca_cibo_usda(query):
-    url = "https://api.nal.usda.gov/fdc/v1/foods/search"
-    parametri = {
-        "api_key": "DEMO_KEY",
-        "query": query,
-        "pageSize": 5
-    }
-    risposta = requests.get(url, params=parametri)
-    if risposta.status_code == 200:
-        dati = risposta.json()
-        return dati.get('foods', [])
-    return []
+# --- CONFIGURAZIONE PAGINA ---
+st.set_page_config(page_title="DrinkSafe Pro", page_icon="🍷", layout="centered")
 
-# --- DIZIONARI E DATI BASE ---
-gradazioni_alcoliche = {
+# --- FUNZIONE CARICAMENTO DATI (OTTIMIZZATA) ---
+@st.cache_data
+def load_all_data():
+    # 1. Caricamento Cocktail
+    df_cocktails = pd.DataFrame()
+    if os.path.exists('data_cocktails.csv'):
+        df_cocktails = pd.read_csv('data_cocktails.csv')
+    
+    # 2. Caricamento Cibo (Unione dei gruppi e rimozione doppioni)
+    food_list = []
+    # Cerchiamo tutti i file FOOD-DATA e fastfood
+    for f in glob.glob('FOOD-DATA-GROUP*.csv'):
+        temp_df = pd.read_csv(f, usecols=['food'])
+        food_list.append(temp_df.rename(columns={'food': 'item_name'}))
+        
+    if os.path.exists('fastfood_calories.csv'):
+        ff_df = pd.read_csv('fastfood_calories.csv', usecols=['restaurant', 'item'])
+        ff_df['item_name'] = ff_df['restaurant'] + " - " + ff_df['item']
+        food_list.append(ff_df[['item_name']])
+        
+    if food_list:
+        full_food_df = pd.concat(food_list, ignore_index=True)
+        # Pulizia: rimuoviamo spazi, rendiamo minuscolo per trovare doppioni, poi teniamo l'originale
+        full_food_df['clean'] = full_food_df['item_name'].str.lower().str.strip()
+        full_food_df = full_food_df.drop_duplicates(subset=['clean']).sort_values('clean')
+        final_food_list = full_food_df['item_name'].tolist()
+    else:
+        final_food_list = []
+        
+    return df_cocktails, final_food_list
+
+# Carichiamo i database
+db_cocktails, list_food = load_all_data()
+
+# Dizionario ABV per calcolo automatico
+abv_map = {
     "vodka": 40.0, "gin": 40.0, "rum": 40.0, "tequila": 40.0, "whiskey": 40.0, 
-    "bourbon": 40.0, "rye whiskey": 40.0, "scotch": 40.0, "cognac": 40.0, "brandy": 40.0,
-    "triple sec": 30.0, "cointreau": 40.0, "grand marnier": 40.0, "amaretto": 28.0,
-    "kahlua": 20.0, "baileys": 17.0, "campari": 25.0, "aperol": 11.0, 
-    "vermouth": 15.0, "sweet vermouth": 15.0, "dry vermouth": 15.0,
-    "champagne": 12.0, "prosecco": 11.0, "wine": 12.0, "red wine": 13.0, "white wine": 12.0,
-    "beer": 5.0, "ale": 5.0, "stout": 6.0, "cider": 5.0, "mezcal": 40.0
+    "bourbon": 40.0, "triple sec": 30.0, "cointreau": 40.0, "amaretto": 28.0,
+    "campari": 25.0, "aperol": 11.0, "vermouth": 15.0, "wine": 12.0, "beer": 5.0
 }
 
-menu_alcolici = {
-    "Birra Piccola (330ml, 5%)": {"ml": 330, "abv": 5.0},
-    "Birra Media (500ml, 5%)": {"ml": 500, "abv": 5.0},
-    "Vino Rosso - Calice (150ml, 13%)": {"ml": 150, "abv": 13.0},
-    "Vino Bianco - Calice (150ml, 12%)": {"ml": 150, "abv": 12.0},
-    "Prosecco/Spumante (150ml, 11%)": {"ml": 150, "abv": 11.0},
-    "Shot (Vodka/Tequila/Rum) (40ml, 40%)": {"ml": 40, "abv": 40.0},
-    "Amaro/Digestivo (40ml, 30%)": {"ml": 40, "abv": 30.0},
-    "Grappa (40ml, 40%)": {"ml": 40, "abv": 40.0},
-    "Spritz (Aperol/Campari) (150ml, ~11%)": {"ml": 150, "abv": 11.0}
-}
+# --- STATO DELLA SESSIONE ---
+if 'total_alcohol_g' not in st.session_state: st.session_state.total_alcohol_g = 0.0
+if 'log' not in st.session_state: st.session_state.log = []
 
-menu_cibi_comuni = [
-    "🍕 Pizza Margherita (Pasto Completo)",
-    "🍝 Piatto di Pasta (Pasto Completo)",
-    "🍔 Hamburger con Patatine (Pasto Completo)",
-    "🥩 Bistecca con Contorno (Pasto Completo)",
-    "🥪 Panino o Tramezzino (Spuntino)",
-    "🧀 Tagliere Salumi e Formaggi (Aperitivo)",
-    "🥗 Insalata Mista (Pasto Leggero)",
-    "🍟 Patatine Fritte (Spuntino)",
-    "🥐 Brioche / Pezzo dolce (Spuntino)"
-]
+st.title("🍹 DrinkSafe: Calcolatore Alcolemico")
+st.markdown("Database offline caricato con successo da GitHub.")
 
-def calcola_ml_da_misura(misura_str):
-    if not misura_str: return 0.0
-    misura = misura_str.lower().strip()
-    valore = 1.0
-    if "1/2" in misura: valore = 0.5
-    elif "1/4" in misura: valore = 0.25
-    elif "3/4" in misura: valore = 0.75
-    elif "1/3" in misura: valore = 0.33
-    else:
-        match = re.search(r'^[\d\.]+', misura)
-        if match:
-            valore = float(match.group())
-    if "oz" in misura: return valore * 30.0
-    if "cl" in misura: return valore * 10.0
-    if "ml" in misura: return valore
-    if "shot" in misura: return valore * 44.0
-    if "part" in misura: return valore * 30.0
-    if "dash" in misura or "drop" in misura or "splash" in misura: return 1.0
-    return valore * 30.0
-
-def calcola_grammi_drink(drink_data):
-    totale_grammi = 0.0
-    ingredienti_calcolati = []
-    for i in range(1, 16):
-        ingrediente = drink_data.get(f'strIngredient{i}')
-        misura = drink_data.get(f'strMeasure{i}')
-        if ingrediente:
-            ingrediente_basso = ingrediente.lower()
-            ml_totali = calcola_ml_da_misura(misura)
-            abv = 0.0
-            for chiave in gradazioni_alcoliche:
-                if chiave in ingrediente_basso:
-                    abv = gradazioni_alcoliche[chiave]
-                    break
-            if abv > 0:
-                grammi = ml_totali * (abv / 100) * 0.8
-                totale_grammi += grammi
-                ingredienti_calcolati.append(f"{ingrediente} ({ml_totali:.0f}ml al {abv}%) -> {grammi:.1f}g")
-    return totale_grammi, ingredienti_calcolati
-
-# --- IMPOSTAZIONI E MEMORIA DELL'APP ---
-st.set_page_config(page_title="Calcolatore Tasso Alcolemico", page_icon="🍷")
-
-if 'lista_drink' not in st.session_state:
-    st.session_state.lista_drink = []
-if 'totale_alcol_g' not in st.session_state:
-    st.session_state.totale_alcol_g = 0.0
-if 'risultato_ricerca' not in st.session_state:
-    st.session_state.risultato_ricerca = None
-
-if 'lista_cibo' not in st.session_state:
-    st.session_state.lista_cibo = []
-if 'risultati_ricerca_cibo' not in st.session_state:
-    st.session_state.risultati_ricerca_cibo = None
-
-st.title("Calcolatore Avanzato Tasso Alcolemico")
-
-# --- SEZIONE 1: I TUOI DATI ---
-st.header("1. Profilo Utente")
-col1, col2 = st.columns(2)
-with col1:
-    peso = st.number_input("Peso (kg)", min_value=30, max_value=200, value=70)
-with col2:
-    sesso = st.selectbox("Sesso", ["Maschio", "Femmina"])
-
-st.divider()
-
-# --- SEZIONE 2: INSERIMENTO BEVANDE (AGGIORNATA) ---
-st.header("2. Cosa hai bevuto?")
-
-# NUOVO: Aggiunta la terza scheda (Tab) per l'inserimento manuale!
-tab1, tab2, tab3 = st.tabs(["🍺 Rapida", "🍹 Cerca API", "✍️ Manuale"])
-
-with tab1:
-    scelta_rapida = st.selectbox("Seleziona la bevanda:", list(menu_alcolici.keys()))
-    if st.button("Aggiungi alla lista", key="btn_rapido"):
-        dati_bevanda = menu_alcolici[scelta_rapida]
-        grammi_calcolati = dati_bevanda["ml"] * (dati_bevanda["abv"] / 100) * 0.8
-        st.session_state.lista_drink.append(scelta_rapida)
-        st.session_state.totale_alcol_g += grammi_calcolati
+# --- INPUT UTENTE ---
+with st.sidebar:
+    st.header("👤 Tuoi Dati")
+    weight = st.number_input("Peso (kg)", 40, 150, 70)
+    gender = st.selectbox("Sesso", ["Maschio", "Femmina"])
+    st.divider()
+    if st.button("Svuota Sessione (Reset)"):
+        st.session_state.total_alcohol_g = 0.0
+        st.session_state.log = []
         st.rerun()
 
-with tab2:
-    nome_drink = st.text_input("Nome del cocktail in inglese (es. Margarita):")
-    if st.button("Cerca Cocktail", key="btn_ricerca_drink"):
-        if nome_drink:
-            url_api = f"https://www.thecocktaildb.com/api/json/v1/1/search.php?s={nome_drink}"
-            risposta = requests.get(url_api)
-            dati = risposta.json()
-            if dati['drinks']:
-                drink_trovato = dati['drinks'][0]
-                alcol_calcolato, dettagli = calcola_grammi_drink(drink_trovato)
-                st.session_state.risultato_ricerca = {
-                    "nome": drink_trovato['strDrink'],
-                    "alcol": alcol_calcolato,
-                    "dettagli": dettagli
-                }
-            else:
-                st.error("Drink non trovato. Prova con la scheda 'Manuale'!")
-                st.session_state.risultato_ricerca = None
+# --- SEZIONE AGGIUNTA CONSUMI ---
+col_a, col_b = st.columns(2)
 
-    if st.session_state.risultato_ricerca:
-        ricerca = st.session_state.risultato_ricerca
-        st.success(f"Trovato: {ricerca['nome']}")
-        st.write(f"**Alcol calcolato:** {ricerca['alcol']:.1f} g")
-        if st.button(f"Aggiungi {ricerca['nome']} alla lista", key="btn_aggiungi_drink"):
-            st.session_state.lista_drink.append(ricerca['nome'])
-            st.session_state.totale_alcol_g += ricerca['alcol']
-            st.session_state.risultato_ricerca = None
-            st.rerun()
-
-# --- LA NUOVA SCHEDA MANUALE ---
-with tab3:
-    st.write("Non trovi il tuo drink o hai bevuto qualcosa di particolare? Inseriscilo qui:")
-    nome_manuale = st.text_input("Nome del drink (es. Angelo Azzurro, Amaro della casa):")
-    
-    col_m1, col_m2 = st.columns(2)
-    with col_m1:
-        ml_manuale = st.number_input("Quantità (in ml)", min_value=10, max_value=1000, value=150, step=10)
-    with col_m2:
-        abv_manuale = st.number_input("Gradazione Alcolica (VOL %)", min_value=1.0, max_value=95.0, value=15.0, step=0.5)
+with col_a:
+    st.subheader("🍸 Drink")
+    if not db_cocktails.empty:
+        drink_names = sorted(db_cocktails['strDrink'].unique().tolist())
+        selected_drink = st.selectbox("Seleziona Cocktail:", [""] + drink_names)
         
-    if st.button("Aggiungi Drink Manuale"):
-        if nome_manuale:
-            # Calcolo standard: volume * (percentuale/100) * densità alcol
-            grammi_calc = ml_manuale * (abv_manuale / 100) * 0.8
-            st.session_state.lista_drink.append(f"{nome_manuale} ({ml_manuale}ml al {abv_manuale}%)")
-            st.session_state.totale_alcol_g += grammi_calc
-            st.rerun()
-        else:
-            st.warning("Per favore, inserisci un nome per il tuo drink.")
-
-
-# --- SEZIONE 3: CIBO E IDRATAZIONE (USDA) ---
-st.divider()
-st.header("3. Cibo e Idratazione 🍔💧")
-
-tab_cibo1, tab_cibo2 = st.tabs(["🍔 Selezione Rapida Cibo", "🔍 Cerca in USDA FoodData"])
-
-with tab_cibo1:
-    scelta_cibo_rapida = st.selectbox("Cosa hai mangiato?", menu_cibi_comuni)
-    if st.button("Aggiungi cibo alla lista", key="btn_cibo_rapido"):
-        st.session_state.lista_cibo.append(scelta_cibo_rapida)
-        st.rerun()
-
-with tab_cibo2:
-    st.write("Cerca nel database del Dipartimento dell'Agricoltura USA (usa l'inglese, es. 'Cheese'):")
-    query_cibo = st.text_input("Nome alimento:")
-
-    if st.button("Cerca Alimento", key="btn_ricerca_cibo"):
-        if query_cibo:
-            with st.spinner("Connessione ai server USDA in corso..."):
-                risultati = cerca_cibo_usda(query_cibo)
-                if risultati:
-                    st.session_state.risultati_ricerca_cibo = risultati
-                else:
-                    st.error("Nessun alimento trovato. Assicurati di cercare in inglese!")
-                    st.session_state.risultati_ricerca_cibo = None
-
-    if st.session_state.risultati_ricerca_cibo:
-        for cibo in st.session_state.risultati_ricerca_cibo:
-            nome_cibo = cibo.get('description', 'Sconosciuto').title()
-            marca = cibo.get('brandOwner', 'Generico')
+        if st.button("Aggiungi Drink") and selected_drink != "":
+            # Filtriamo gli ingredienti del cocktail scelto
+            ingredients = db_cocktails[db_cocktails['strDrink'] == selected_drink]
+            drink_alc_g = 0.0
             
-            col_testo, col_btn = st.columns([3, 1])
-            with col_testo:
-                st.write(f"**{nome_cibo}** (*{marca}*)")
-            with col_btn:
-                if st.button("➕ Aggiungi", key=f"add_cibo_{cibo.get('fdcId')}"):
-                    st.session_state.lista_cibo.append(f"{nome_cibo} ({marca})")
-                    st.session_state.risultati_ricerca_cibo = None
-                    st.rerun()
+            for _, row in ingredients.iterrows():
+                ml = pd.to_numeric(row['Value_ml'], errors='coerce')
+                ing_name = str(row['strIngredients']).lower()
+                if ml > 0:
+                    # Cerchiamo l'ABV nel dizionario
+                    abv = 0.0
+                    for key, val in abv_map.items():
+                        if key in ing_name:
+                            abv = val
+                            break
+                    drink_alc_g += (ml * (abv / 100) * 0.8)
+            
+            st.session_state.total_alcohol_g += drink_alc_g
+            st.session_state.log.append(f"Drink: {selected_drink} ({drink_alc_g:.1f}g alcol)")
+            st.toast(f"Aggiunto {selected_drink}!")
 
-if st.session_state.lista_cibo:
-    st.success("🍕 Cibo consumato registrato:")
-    for pasto in st.session_state.lista_cibo:
-        st.write(f"- {pasto}")
-    if st.button("🗑️ Svuota lista cibo"):
-        st.session_state.lista_cibo = []
-        st.rerun()
+with col_b:
+    st.subheader("🍔 Cibo")
+    if list_food:
+        selected_food = st.selectbox("Cerca Alimento:", [""] + list_food)
+        if st.button("Aggiungi Cibo") and selected_food != "":
+            st.session_state.log.append(f"Cibo: {selected_food}")
+            st.toast(f"Registrato: {selected_food}")
 
-st.write("---")
-col_idra1, col_idra2 = st.columns(2)
-with col_idra1:
-    bicchieri_acqua = st.number_input("Bicchieri d'acqua/analcolici bevuti", min_value=0, value=0)
-with col_idra2:
-    eventi_minzione = st.number_input("Quante volte sei andato/a in bagno?", min_value=0, value=0)
-
-# --- SEZIONE 4 E RIEPILOGO FINALE ---
+# --- CALCOLO FINALE ---
 st.divider()
-st.header("📊 Riepilogo e Calcolo Finale")
+st.subheader("📝 Riepilogo Consumi")
+for entry in st.session_state.log:
+    st.caption(entry)
 
-if st.session_state.lista_drink:
-    col_met1, col_met2 = st.columns(2)
-    with col_met1:
-        st.metric(label="🍹 Numero di Drink", value=len(st.session_state.lista_drink))
-    with col_met2:
-        st.metric(label="⚖️ Totale Alcol", value=f"{st.session_state.totale_alcol_g:.1f} g")
-    
-    if st.button("🗑️ Svuota memoria drink", key="svuota_drink_basso"):
-        st.session_state.lista_drink = []
-        st.session_state.totale_alcol_g = 0.0
-        st.rerun()
+hours = st.slider("Ore passate dal primo sorso:", 0.0, 10.0, 1.0)
 
-ore_trascorse = st.number_input("Ore trascorse dal primo drink", min_value=0.0, value=1.0, step=0.5)
-
-if st.button("Calcola Tasso Alcolemico", type="primary"):
-    r = 0.68 if sesso == "Maschio" else 0.55
-    
-    ha_mangiato = len(st.session_state.lista_cibo) > 0
-    if ha_mangiato:
+if st.button("CALCOLA TASSO ALCOLEMICO", type="primary"):
+    # Formula di Widmark
+    r = 0.68 if gender == "Maschio" else 0.55
+    # Bonus cibo
+    if any("Cibo:" in entry for entry in st.session_state.log):
         r += 0.1
-        st.info("💡 Noto che hai mangiato! Ho adeguato il calcolo: il cibo rallenta l'assorbimento dell'alcol.")
-        
-    if peso > 0 and st.session_state.totale_alcol_g > 0:
-        bac_iniziale = st.session_state.totale_alcol_g / (peso * r)
-        bac_finale = max(0.0, bac_iniziale - (0.15 * ore_trascorse))
+    
+    # BAC = (Alcol_g / (Peso * r)) - (Beta * ore)
+    bac = (st.session_state.total_alcohol_g / (weight * r)) - (0.15 * hours)
+    bac = max(0.0, bac)
+    
+    st.header(f"Tasso Stimato: {bac:.2f} g/L")
+    
+    if bac >= 0.5:
+        st.error("⚠️ SEI SOPRA IL LIMITE LEGALE (0.5 g/L). Non guidare!")
+    elif bac > 0:
+        st.warning("⚖️ Sei sotto il limite, ma la tua attenzione è comunque ridotta.")
     else:
-        bac_finale = 0.0
-        
-    st.subheader(f"Tasso alcolemico stimato: {bac_finale:.2f} g/L")
+        st.success("✅ Sei a zero. Guida con prudenza!")
