@@ -49,11 +49,9 @@ def calcola_ml_da_misura(misura_str):
 def calcola_grammi_drink(drink_data):
     totale_grammi = 0.0
     ingredienti_calcolati = []
-    
     for i in range(1, 16):
         ingrediente = drink_data.get(f'strIngredient{i}')
         misura = drink_data.get(f'strMeasure{i}')
-        
         if ingrediente:
             ingrediente_basso = ingrediente.lower()
             ml_totali = calcola_ml_da_misura(misura)
@@ -62,22 +60,23 @@ def calcola_grammi_drink(drink_data):
                 if chiave in ingrediente_basso:
                     abv = gradazioni_alcoliche[chiave]
                     break
-            
             if abv > 0:
                 grammi = ml_totali * (abv / 100) * 0.8
                 totale_grammi += grammi
-                ingredienti_calcolati.append(f"{ingrediente} ({ml_totali:.0f}ml al {abv}%) -> {grammi:.1f}g di alcol")
-                
+                ingredienti_calcolati.append(f"{ingrediente} ({ml_totali:.0f}ml al {abv}%) -> {grammi:.1f}g")
     return totale_grammi, ingredienti_calcolati
-
 
 # --- IMPOSTAZIONI E MEMORIA DELL'APP ---
 st.set_page_config(page_title="Calcolatore Tasso Alcolemico", page_icon="🍷")
 
+# Inizializziamo tutte le variabili di memoria necessarie
 if 'lista_drink' not in st.session_state:
     st.session_state.lista_drink = []
 if 'totale_alcol_g' not in st.session_state:
     st.session_state.totale_alcol_g = 0.0
+# NUOVO: Una memoria temporanea per la ricerca del cocktail
+if 'risultato_ricerca' not in st.session_state:
+    st.session_state.risultato_ricerca = None
 
 st.title("Calcolatore Avanzato Tasso Alcolemico")
 
@@ -93,7 +92,6 @@ st.divider()
 
 # --- SEZIONE 2: INSERIMENTO BEVANDE CON TABS ---
 st.header("2. Cosa hai bevuto?")
-
 tab1, tab2 = st.tabs(["🍺 Selezione Rapida", "🍹 Cerca Cocktail (API)"])
 
 with tab1:
@@ -107,7 +105,9 @@ with tab1:
 
 with tab2:
     nome_drink = st.text_input("Nome del cocktail (es. Margarita):")
-    if st.button("Cerca e Calcola Alcol", key="btn_ricerca"):
+    
+    # Bottone 1: Cerca e Salva in Memoria
+    if st.button("Cerca Cocktail", key="btn_ricerca"):
         if nome_drink:
             url_api = f"https://www.thecocktaildb.com/api/json/v1/1/search.php?s={nome_drink}"
             risposta = requests.get(url_api)
@@ -118,35 +118,49 @@ with tab2:
                 nome = drink_trovato['strDrink']
                 alcol_calcolato, dettagli = calcola_grammi_drink(drink_trovato)
                 
-                st.success(f"Trovato: {nome}")
-                st.write(f"**Alcol calcolato:** {alcol_calcolato:.1f} g")
-                
-                if st.button(f"Aggiungi {nome} alla lista", key="btn_aggiungi_ricerca"):
-                    st.session_state.lista_drink.append(nome)
-                    st.session_state.totale_alcol_g += alcol_calcolato
-                    st.rerun()
+                # Salviamo i risultati nella memoria temporanea
+                st.session_state.risultato_ricerca = {
+                    "nome": nome,
+                    "alcol": alcol_calcolato,
+                    "dettagli": dettagli
+                }
             else:
                 st.error("Drink non trovato.")
+                st.session_state.risultato_ricerca = None
+
+    # Se c'è una ricerca salvata in memoria, mostriamo i dati e il Bottone 2
+    if st.session_state.risultato_ricerca:
+        ricerca = st.session_state.risultato_ricerca
+        st.success(f"Trovato: {ricerca['nome']}")
+        st.write(f"**Alcol calcolato:** {ricerca['alcol']:.1f} g")
+        
+        with st.expander("Vedi i dettagli del calcolo"):
+            if ricerca['dettagli']:
+                for det in ricerca['dettagli']:
+                    st.write(f"- {det}")
+            else:
+                st.write("Nessun ingrediente alcolico riconosciuto.")
+        
+        # Bottone 2: Aggiunge alla lista e pulisce la ricerca
+        if st.button(f"Aggiungi {ricerca['nome']} alla lista", key="btn_aggiungi_ricerca"):
+            st.session_state.lista_drink.append(ricerca['nome'])
+            st.session_state.totale_alcol_g += ricerca['alcol']
+            st.session_state.risultato_ricerca = None # Svuotiamo la ricerca temporanea
+            st.rerun()
 
 # --- NUOVA SEZIONE: RIEPILOGO METRICHE ---
 st.write("---")
 st.header("📊 Riepilogo Consumi")
 
-# Controlliamo se ci sono drink nella memoria
 if st.session_state.lista_drink:
-    # Creiamo due colonne per i nostri contatori grandi
     col_met1, col_met2 = st.columns(2)
-    
-    # len() conta quanti elementi ci sono nella lista
     numero_drink_totali = len(st.session_state.lista_drink)
     
-    # st.metric crea i numeri in grande stile dashboard
     with col_met1:
         st.metric(label="🍹 Numero di Drink Assunti", value=numero_drink_totali)
     with col_met2:
         st.metric(label="⚖️ Totale Alcol Assunto", value=f"{st.session_state.totale_alcol_g:.1f} g")
     
-    # Menu espandibile per vedere lo scontrino
     with st.expander("Vedi i nomi dei drink bevuti"):
         for drink in st.session_state.lista_drink:
             st.write(f"- {drink}")
@@ -154,6 +168,7 @@ if st.session_state.lista_drink:
     if st.button("🗑️ Svuota memoria drink"):
         st.session_state.lista_drink = []
         st.session_state.totale_alcol_g = 0.0
+        st.session_state.risultato_ricerca = None
         st.rerun()
 else:
     st.info("Non hai ancora aggiunto nessun drink. Usa la selezione qui sopra per iniziare!")
