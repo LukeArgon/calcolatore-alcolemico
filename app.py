@@ -2,15 +2,23 @@ import streamlit as st
 import requests
 import re
 
-# --- FUNZIONI DI RICERCA CIBO CON OPEN FOOD FACTS ---
-def cerca_cibo_openfoodfacts(query):
-    url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={query}&search_simple=1&action=process&json=1"
-    headers = {'User-Agent': 'CalcolatoreAlcolemicoApp/1.0'} 
-    risposta = requests.get(url, headers=headers)
+# --- NUOVA FUNZIONE: RICERCA CIBO CON USDA FOODDATA CENTRAL ---
+def cerca_cibo_usda(query):
+    """Cerca un alimento nel database ufficiale del governo americano (USDA)"""
+    url = "https://api.nal.usda.gov/fdc/v1/foods/search"
+    
+    # Usiamo la DEMO_KEY per iniziare subito. Se l'app diventerà famosa, 
+    # basterà registrasi sul sito USDA per avere una chiave senza limiti!
+    parametri = {
+        "api_key": "DEMO_KEY",
+        "query": query,
+        "pageSize": 5 # Chiediamo solo i primi 5 risultati
+    }
+    
+    risposta = requests.get(url, params=parametri)
     if risposta.status_code == 200:
         dati = risposta.json()
-        prodotti = dati.get('products', [])
-        return prodotti[:5] 
+        return dati.get('foods', [])
     return []
 
 # --- DIZIONARI E DATI BASE ---
@@ -36,7 +44,6 @@ menu_alcolici = {
     "Spritz (Aperol/Campari) (150ml, ~11%)": {"ml": 150, "abv": 11.0}
 }
 
-# NUOVO: Menu dei cibi comuni
 menu_cibi_comuni = [
     "🍕 Pizza Margherita (Pasto Completo)",
     "🍝 Piatto di Pasta (Pasto Completo)",
@@ -92,7 +99,6 @@ def calcola_grammi_drink(drink_data):
 # --- IMPOSTAZIONI E MEMORIA DELL'APP ---
 st.set_page_config(page_title="Calcolatore Tasso Alcolemico", page_icon="🍷")
 
-# Memoria Drink
 if 'lista_drink' not in st.session_state:
     st.session_state.lista_drink = []
 if 'totale_alcol_g' not in st.session_state:
@@ -100,7 +106,6 @@ if 'totale_alcol_g' not in st.session_state:
 if 'risultato_ricerca' not in st.session_state:
     st.session_state.risultato_ricerca = None
 
-# Memoria Cibo
 if 'lista_cibo' not in st.session_state:
     st.session_state.lista_cibo = []
 if 'risultati_ricerca_cibo' not in st.session_state:
@@ -160,12 +165,11 @@ with tab2:
             st.session_state.risultato_ricerca = None
             st.rerun()
 
-# --- SEZIONE 3: CIBO E IDRATAZIONE (AGGIORNATA CON TABS) ---
+# --- SEZIONE 3: CIBO E IDRATAZIONE (AGGIORNATA USDA) ---
 st.divider()
 st.header("3. Cibo e Idratazione 🍔💧")
 
-# NUOVO: Schede per il cibo
-tab_cibo1, tab_cibo2 = st.tabs(["🍔 Selezione Rapida Cibo", "🔍 Cerca nel Database"])
+tab_cibo1, tab_cibo2 = st.tabs(["🍔 Selezione Rapida Cibo", "🔍 Cerca in USDA FoodData"])
 
 with tab_cibo1:
     scelta_cibo_rapida = st.selectbox("Cosa hai mangiato?", menu_cibi_comuni)
@@ -174,81 +178,3 @@ with tab_cibo1:
         st.rerun()
 
 with tab_cibo2:
-    st.write("Cerca un alimento specifico (es. Nutella, Pringles):")
-    query_cibo = st.text_input("Nome alimento:")
-
-    if st.button("Cerca Alimento", key="btn_ricerca_cibo"):
-        if query_cibo:
-            with st.spinner("Ricerca nel database Open Food Facts..."):
-                risultati = cerca_cibo_openfoodfacts(query_cibo)
-                if risultati:
-                    st.session_state.risultati_ricerca_cibo = risultati
-                else:
-                    st.error("Nessun alimento trovato. Prova un altro termine.")
-                    st.session_state.risultati_ricerca_cibo = None
-
-    if st.session_state.risultati_ricerca_cibo:
-        st.write("**Risultati trovati:**")
-        for cibo in st.session_state.risultati_ricerca_cibo:
-            nome_cibo = cibo.get('product_name', 'Prodotto senza nome')
-            marca = cibo.get('brands', 'Marca ignota')
-            
-            if nome_cibo and nome_cibo != 'Prodotto senza nome':
-                col_testo, col_btn = st.columns([3, 1])
-                with col_testo:
-                    st.write(f"**{nome_cibo}** (*{marca}*)")
-                with col_btn:
-                    if st.button("➕ Aggiungi", key=f"add_cibo_{cibo.get('_id', nome_cibo)}"):
-                        st.session_state.lista_cibo.append(f"{nome_cibo} ({marca})")
-                        st.session_state.risultati_ricerca_cibo = None
-                        st.rerun()
-
-# Riepilogo cibo mangiato (sempre visibile sotto le schede)
-if st.session_state.lista_cibo:
-    st.success("🍕 Cibo consumato registrato:")
-    for pasto in st.session_state.lista_cibo:
-        st.write(f"- {pasto}")
-    if st.button("🗑️ Svuota lista cibo"):
-        st.session_state.lista_cibo = []
-        st.rerun()
-
-st.write("---")
-col_idra1, col_idra2 = st.columns(2)
-with col_idra1:
-    bicchieri_acqua = st.number_input("Bicchieri d'acqua/analcolici bevuti", min_value=0, value=0)
-with col_idra2:
-    eventi_minzione = st.number_input("Quante volte sei andato/a in bagno?", min_value=0, value=0)
-
-# --- SEZIONE 4 E RIEPILOGO FINALE ---
-st.divider()
-st.header("📊 Riepilogo e Calcolo Finale")
-
-if st.session_state.lista_drink:
-    col_met1, col_met2 = st.columns(2)
-    with col_met1:
-        st.metric(label="🍹 Numero di Drink", value=len(st.session_state.lista_drink))
-    with col_met2:
-        st.metric(label="⚖️ Totale Alcol", value=f"{st.session_state.totale_alcol_g:.1f} g")
-    
-    if st.button("🗑️ Svuota memoria drink", key="svuota_drink_basso"):
-        st.session_state.lista_drink = []
-        st.session_state.totale_alcol_g = 0.0
-        st.rerun()
-
-ore_trascorse = st.number_input("Ore trascorse dal primo drink", min_value=0.0, value=1.0, step=0.5)
-
-if st.button("Calcola Tasso Alcolemico", type="primary"):
-    r = 0.68 if sesso == "Maschio" else 0.55
-    
-    ha_mangiato = len(st.session_state.lista_cibo) > 0
-    if ha_mangiato:
-        r += 0.1
-        st.info("💡 Noto che hai mangiato! Ho adeguato il calcolo: il cibo rallenta l'assorbimento dell'alcol.")
-        
-    if peso > 0 and st.session_state.totale_alcol_g > 0:
-        bac_iniziale = st.session_state.totale_alcol_g / (peso * r)
-        bac_finale = max(0.0, bac_iniziale - (0.15 * ore_trascorse))
-    else:
-        bac_finale = 0.0
-        
-    st.subheader(f"Tasso alcolemico stimato: {bac_finale:.2f} g/L")
