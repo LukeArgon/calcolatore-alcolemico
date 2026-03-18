@@ -2,24 +2,18 @@ import streamlit as st
 import requests
 import re
 
-# --- NUOVA FUNZIONE: RICERCA CIBO CON OPEN FOOD FACTS ---
+# --- FUNZIONI DI RICERCA CIBO CON OPEN FOOD FACTS ---
 def cerca_cibo_openfoodfacts(query):
-    """Cerca un alimento nel database libero Open Food Facts"""
-    # L'URL magico che non richiede chiavi!
     url = f"https://world.openfoodfacts.org/cgi/search.pl?search_terms={query}&search_simple=1&action=process&json=1"
-    
-    # Facciamo finta di essere un browser per non farci bloccare
     headers = {'User-Agent': 'CalcolatoreAlcolemicoApp/1.0'} 
-    
     risposta = requests.get(url, headers=headers)
     if risposta.status_code == 200:
         dati = risposta.json()
-        # Restituiamo solo i primi 5 prodotti trovati per non intasare lo schermo
         prodotti = dati.get('products', [])
         return prodotti[:5] 
     return []
 
-# --- FUNZIONI DI CALCOLO ALCOL (Invariate) ---
+# --- DIZIONARI E DATI BASE ---
 gradazioni_alcoliche = {
     "vodka": 40.0, "gin": 40.0, "rum": 40.0, "tequila": 40.0, "whiskey": 40.0, 
     "bourbon": 40.0, "rye whiskey": 40.0, "scotch": 40.0, "cognac": 40.0, "brandy": 40.0,
@@ -41,6 +35,19 @@ menu_alcolici = {
     "Grappa (40ml, 40%)": {"ml": 40, "abv": 40.0},
     "Spritz (Aperol/Campari) (150ml, ~11%)": {"ml": 150, "abv": 11.0}
 }
+
+# NUOVO: Menu dei cibi comuni
+menu_cibi_comuni = [
+    "🍕 Pizza Margherita (Pasto Completo)",
+    "🍝 Piatto di Pasta (Pasto Completo)",
+    "🍔 Hamburger con Patatine (Pasto Completo)",
+    "🥩 Bistecca con Contorno (Pasto Completo)",
+    "🥪 Panino o Tramezzino (Spuntino)",
+    "🧀 Tagliere Salumi e Formaggi (Aperitivo)",
+    "🥗 Insalata Mista (Pasto Leggero)",
+    "🍟 Patatine Fritte (Spuntino)",
+    "🥐 Brioche / Pezzo dolce (Spuntino)"
+]
 
 def calcola_ml_da_misura(misura_str):
     if not misura_str: return 0.0
@@ -153,48 +160,55 @@ with tab2:
             st.session_state.risultato_ricerca = None
             st.rerun()
 
-# --- SEZIONE 3: CIBO E IDRATAZIONE (Con Open Food Facts!) ---
+# --- SEZIONE 3: CIBO E IDRATAZIONE (AGGIORNATA CON TABS) ---
 st.divider()
 st.header("3. Cibo e Idratazione 🍔💧")
 
-st.write("Cerca un alimento (es. Pizza, Burger, Pasta):")
-query_cibo = st.text_input("Nome alimento:")
+# NUOVO: Schede per il cibo
+tab_cibo1, tab_cibo2 = st.tabs(["🍔 Selezione Rapida Cibo", "🔍 Cerca nel Database"])
 
-if st.button("Cerca Alimento", key="btn_ricerca_cibo"):
-    if query_cibo:
-        with st.spinner("Ricerca nel database Open Food Facts..."):
-            risultati = cerca_cibo_openfoodfacts(query_cibo)
-            if risultati:
-                st.session_state.risultati_ricerca_cibo = risultati
-            else:
-                st.error("Nessun alimento trovato. Prova un altro termine (magari in inglese).")
-                st.session_state.risultati_ricerca_cibo = None
+with tab_cibo1:
+    scelta_cibo_rapida = st.selectbox("Cosa hai mangiato?", menu_cibi_comuni)
+    if st.button("Aggiungi cibo alla lista", key="btn_cibo_rapido"):
+        st.session_state.lista_cibo.append(scelta_cibo_rapida)
+        st.rerun()
 
-if st.session_state.risultati_ricerca_cibo:
-    st.write("**Risultati trovati (seleziona per aggiungere):**")
-    for cibo in st.session_state.risultati_ricerca_cibo:
-        # Open Food Facts ha campi diversi rispetto a FatSecret
-        nome_cibo = cibo.get('product_name', 'Prodotto senza nome')
-        marca = cibo.get('brands', 'Marca ignota')
-        
-        # Saltiamo i prodotti che non hanno un nome valido
-        if nome_cibo and nome_cibo != 'Prodotto senza nome':
-            col_testo, col_btn = st.columns([3, 1])
-            with col_testo:
-                st.write(f"**{nome_cibo}** (*{marca}*)")
-            with col_btn:
-                # Usiamo l'ID univoco del prodotto per il bottone
-                if st.button("➕ Aggiungi", key=f"add_cibo_{cibo.get('_id', nome_cibo)}"):
-                    st.session_state.lista_cibo.append(f"{nome_cibo} ({marca})")
+with tab_cibo2:
+    st.write("Cerca un alimento specifico (es. Nutella, Pringles):")
+    query_cibo = st.text_input("Nome alimento:")
+
+    if st.button("Cerca Alimento", key="btn_ricerca_cibo"):
+        if query_cibo:
+            with st.spinner("Ricerca nel database Open Food Facts..."):
+                risultati = cerca_cibo_openfoodfacts(query_cibo)
+                if risultati:
+                    st.session_state.risultati_ricerca_cibo = risultati
+                else:
+                    st.error("Nessun alimento trovato. Prova un altro termine.")
                     st.session_state.risultati_ricerca_cibo = None
-                    st.rerun()
 
-# Riepilogo cibo mangiato
+    if st.session_state.risultati_ricerca_cibo:
+        st.write("**Risultati trovati:**")
+        for cibo in st.session_state.risultati_ricerca_cibo:
+            nome_cibo = cibo.get('product_name', 'Prodotto senza nome')
+            marca = cibo.get('brands', 'Marca ignota')
+            
+            if nome_cibo and nome_cibo != 'Prodotto senza nome':
+                col_testo, col_btn = st.columns([3, 1])
+                with col_testo:
+                    st.write(f"**{nome_cibo}** (*{marca}*)")
+                with col_btn:
+                    if st.button("➕ Aggiungi", key=f"add_cibo_{cibo.get('_id', nome_cibo)}"):
+                        st.session_state.lista_cibo.append(f"{nome_cibo} ({marca})")
+                        st.session_state.risultati_ricerca_cibo = None
+                        st.rerun()
+
+# Riepilogo cibo mangiato (sempre visibile sotto le schede)
 if st.session_state.lista_cibo:
     st.success("🍕 Cibo consumato registrato:")
     for pasto in st.session_state.lista_cibo:
         st.write(f"- {pasto}")
-    if st.button("🗑️ Svuota cibo"):
+    if st.button("🗑️ Svuota lista cibo"):
         st.session_state.lista_cibo = []
         st.rerun()
 
